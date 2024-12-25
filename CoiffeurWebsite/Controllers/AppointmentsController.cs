@@ -6,9 +6,19 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using CoiffeurWebsite.Models;
+using Microsoft.AspNetCore.Authorization;
 
 namespace CoiffeurWebsite.Controllers
 {
+    public enum AppointmentStatus           //////////////Burayı ekledim
+
+    {
+        Pending,
+        Approved,
+        Rejected
+    }
+
+
     public class AppointmentsController : Controller
     {
         private readonly ApplicationDbContext _context;
@@ -21,7 +31,7 @@ namespace CoiffeurWebsite.Controllers
         // GET: Appointments
         public async Task<IActionResult> Index()
         {
-            var applicationDbContext = _context.Appointments.Include(a => a.customer).Include(a => a.employee);
+            var applicationDbContext = _context.Appointments.Include(a => a.Employee).Include(a => a.User);
             return View(await applicationDbContext.ToListAsync());
         }
 
@@ -34,8 +44,8 @@ namespace CoiffeurWebsite.Controllers
             }
 
             var appointment = await _context.Appointments
-                .Include(a => a.customer)
-                .Include(a => a.employee)
+                .Include(a => a.Employee)
+                .Include(a => a.User)
                 .FirstOrDefaultAsync(m => m.AppointmentID == id);
             if (appointment == null)
             {
@@ -48,8 +58,8 @@ namespace CoiffeurWebsite.Controllers
         // GET: Appointments/Create
         public IActionResult Create()
         {
-            ViewData["CustomerID"] = new SelectList(_context.Customers, "CustomerID", "CustomerID");
             ViewData["EmployeeID"] = new SelectList(_context.Employees, "EmployeeID", "EmployeeID");
+            ViewData["userId"] = new SelectList(_context.Users, "Id", "Id");
             return View();
         }
 
@@ -58,17 +68,42 @@ namespace CoiffeurWebsite.Controllers
         // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create([Bind("AppointmentID,AppointmentDate,Status,CustomerID,EmployeeID")] Appointment appointment)
+        public async Task<IActionResult> Create([Bind("AppointmentID,AppointmentDate,userId,EmployeeID")] Appointment appointment)
         {
-            if (ModelState.IsValid)
+            if (!ModelState.IsValid)
             {
+                // Hataları konsola yazdırma
+                var errors = ModelState.Values.SelectMany(v => v.Errors);
+                foreach (var error in errors)
+                {
+                    Console.WriteLine(error.ErrorMessage);
+                }
+
+                // Kullanıcıya tekrar formu göstermek için
+                ViewData["EmployeeID"] = new SelectList(_context.Employees, "EmployeeID", "EmployeeID", appointment.EmployeeID);
+                ViewData["userId"] = new SelectList(_context.Users, "Id", "Id", appointment.userId);
+                return View(appointment);
+            }
+
+            try
+            {
+                // Varsayılan durum atanıyor
+                appointment.Status = AppointmentStatus.Pending.ToString();
+
+                // Randevu veritabanına ekleniyor
                 _context.Add(appointment);
                 await _context.SaveChangesAsync();
                 return RedirectToAction(nameof(Index));
             }
-            ViewData["CustomerID"] = new SelectList(_context.Customers, "CustomerID", "CustomerID", appointment.CustomerID);
-            ViewData["EmployeeID"] = new SelectList(_context.Employees, "EmployeeID", "EmployeeID", appointment.EmployeeID);
-            return View(appointment);
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Hata: {ex.Message}");
+
+                // Formu tekrar doldurmak için ViewData değerleri güncelleniyor
+                ViewData["EmployeeID"] = new SelectList(_context.Employees, "EmployeeID", "EmployeeID", appointment.EmployeeID);
+                ViewData["userId"] = new SelectList(_context.Users, "Id", "Id", appointment.userId);
+                return View(appointment);
+            }
         }
 
         // GET: Appointments/Edit/5
@@ -84,8 +119,8 @@ namespace CoiffeurWebsite.Controllers
             {
                 return NotFound();
             }
-            ViewData["CustomerID"] = new SelectList(_context.Customers, "CustomerID", "CustomerID", appointment.CustomerID);
             ViewData["EmployeeID"] = new SelectList(_context.Employees, "EmployeeID", "EmployeeID", appointment.EmployeeID);
+            ViewData["userId"] = new SelectList(_context.Users, "Id", "Id", appointment.userId);
             return View(appointment);
         }
 
@@ -94,7 +129,7 @@ namespace CoiffeurWebsite.Controllers
         // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Edit(int id, [Bind("AppointmentID,AppointmentDate,Status,CustomerID,EmployeeID")] Appointment appointment)
+        public async Task<IActionResult> Edit(int id, [Bind("AppointmentID,AppointmentDate,Status,userId,EmployeeID")] Appointment appointment)
         {
             if (id != appointment.AppointmentID)
             {
@@ -121,8 +156,8 @@ namespace CoiffeurWebsite.Controllers
                 }
                 return RedirectToAction(nameof(Index));
             }
-            ViewData["CustomerID"] = new SelectList(_context.Customers, "CustomerID", "CustomerID", appointment.CustomerID);
             ViewData["EmployeeID"] = new SelectList(_context.Employees, "EmployeeID", "EmployeeID", appointment.EmployeeID);
+            ViewData["userId"] = new SelectList(_context.Users, "Id", "Id", appointment.userId);
             return View(appointment);
         }
 
@@ -135,8 +170,8 @@ namespace CoiffeurWebsite.Controllers
             }
 
             var appointment = await _context.Appointments
-                .Include(a => a.customer)
-                .Include(a => a.employee)
+                .Include(a => a.Employee)
+                .Include(a => a.User)
                 .FirstOrDefaultAsync(m => m.AppointmentID == id);
             if (appointment == null)
             {
@@ -165,5 +200,59 @@ namespace CoiffeurWebsite.Controllers
         {
             return _context.Appointments.Any(e => e.AppointmentID == id);
         }
+
+
+        [HttpPost]
+        public async Task<IActionResult> Approve(int id)                  ////////////////////////////////Buradan itibaren randevu onay//////////////////////////
+        {
+            var appointment = await _context.Appointments.FindAsync(id);
+            if (appointment == null)
+            {
+                return NotFound();
+            }
+
+            appointment.Status = "Approved";
+            
+            await _context.SaveChangesAsync();
+
+            return RedirectToAction(nameof(Index));
+        }
+
+        // Randevuyu Reddetme
+        [HttpPost]
+        public async Task<IActionResult> Reject(int id)
+        {
+            var appointment = await _context.Appointments.FindAsync(id);
+            if (appointment == null)
+            {
+                return NotFound();
+            }
+
+            appointment.Status = "Rejected";
+            
+            await _context.SaveChangesAsync();
+
+            return RedirectToAction(nameof(Index));
+        }
+
+        [Authorize(Roles = "Admin,Employee")]
+        [HttpPost]
+        public async Task<IActionResult> Approved(int id)
+        {
+            var appointment = await _context.Appointments.FindAsync(id);
+            if (appointment == null)
+            {
+                return NotFound();
+            }
+
+            appointment.Status = "Approved";
+         
+            await _context.SaveChangesAsync();
+
+            return RedirectToAction("Index"); // Tüm yollar bir IActionResult döndürüyor
+        }
+
+
     }
 }
+
